@@ -1,0 +1,6 @@
+.env
+agents/__pycache__
+core/__pycache__
+examples/__pycache__
+patterns/__pycache__
+utils/__pycache__
