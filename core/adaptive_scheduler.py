@@ -65,19 +65,14 @@ class AdaptiveScheduler:
     async def _execute_task(self, agent_name: str, task: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a single task"""
         agent = self.load_balancer.agent_pool[agent_name]
-        start_time = asyncio.get_event_loop().time()
 
         try:
             # Execute task
             result = await agent.execute_task(task)
 
-            # Calculate execution time
-            execution_time = asyncio.get_event_loop().time() - start_time
-
             # Update agent metrics
             await agent.learn_from_execution({
                 "success": True,
-                "execution_time": execution_time,
                 "pattern": task.get("pattern"),
                 "result": result
             })
@@ -88,7 +83,6 @@ class AdaptiveScheduler:
             logger.error(f"Task execution failed: {str(e)}")
             await agent.learn_from_execution({
                 "success": False,
-                "execution_time": asyncio.get_event_loop().time() - start_time,
                 "pattern": task.get("pattern"),
                 "error": str(e)
             })

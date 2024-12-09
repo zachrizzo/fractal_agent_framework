@@ -1,317 +1,174 @@
-# # main.py
-# from core.fractal_framework import FractalFramework, FractalTask
-# from agents.chatbot_agent import ChatbotAgent, LLMProvider, TaskType
-# from core.fractal_context import FractalContext
-# from utils.vector_store import LocalVectorStore
-# import asyncio
-# from typing import List, Dict, Any
-# from dotenv import load_dotenv
-# import os
-
-# load_dotenv(dotenv_path='.env')
-
-# async def initialize_framework(
-#     code_data: List[Dict[str, Any]],
-#     llm_config: Dict[str, str],
-#     dimension: int = 1536  # Updated default dimension for text-embedding-3-small
-# ) -> FractalFramework:
-#     """Initialize the framework with code data"""
-#     # Create framework
-#     framework = FractalFramework()
-
-#     # Initialize vector store with specified dimension and API key
-#     vector_store = LocalVectorStore(
-#         dimension=dimension,
-#         api_key=llm_config['api_key']  # Pass API key to vector store
-#     )
-
-#     # Index code data
-#     print("Indexing code data...")
-#     for data in code_data:
-#         if 'data' in data and 'code' in data['data']:
-#             code = data['data']['code']
-#             if code:  # Only index non-empty code
-#                 try:
-#                     # Add to vector store with metadata
-#                     metadata = {
-#                         'filePath': data['data'].get('filePath', ''),
-#                         'label': data['data'].get('label', ''),
-#                         'id': data['id'],
-#                         'code': code  # Include original code
-#                     }
-#                     vector_store.add_embedding(data['id'], code, metadata)
-#                     print(f"Indexed: {data['data'].get('label', 'unnamed')}")
-#                 except Exception as e:
-#                     print(f"Error indexing code: {e}")
-
-#     # Initialize chatbot agent
-#     chatbot = ChatbotAgent(
-#         name="code_assistant",
-#         llm_provider=LLMProvider(llm_config['provider']),
-#         api_key=llm_config['api_key'],
-#         vector_store=vector_store
-#     )
-
-#     # Add to framework
-#     framework.add_root_agent(chatbot)
-#     print("Framework initialized successfully!")
-
-#     return framework
-
-# async def chat_session(framework: FractalFramework):
-#     """Run an interactive chat session"""
-#     context = FractalContext(framework.graph)
-#     chatbot = None
-
-#     # Find the chatbot agent
-#     for agent in framework.root_agents:
-#         if isinstance(agent, ChatbotAgent):
-#             chatbot = agent
-#             break
-
-#     if not chatbot:
-#         print("Error: ChatbotAgent not found in framework")
-#         return
-
-#     print("\nWelcome to the Code Assistant!")
-#     print("Type 'quit' to exit")
-#     print("--------------------------------")
-
-#     while True:
-#         try:
-#             # Get user input
-#             user_input = input("\nYou: ").strip()
-#             if user_input.lower() == 'quit':
-#                 break
-
-#             # Create a task for the chatbot
-#             task = FractalTask(
-#                 id="chat_task",
-#                 type=TaskType.ANALYZE,
-#                 data={"message": user_input}
-#             )
-
-#             # Execute task
-#             result = await chatbot.execute_task(task, context)
-
-#             if result.success:
-#                 print("\nAssistant:", result.result['response'])
-#             else:
-#                 print("\nError:", result.error)
-
-#         except Exception as e:
-#             print(f"\nAn error occurred: {e}")
-
-# async def main():
-#     # Example code data
-#     code_data = [
-#         {
-#             'id': 'file-_app.js',
-#             'data': {
-#                 'code': '''const login = () => {
-#                     const [email, setEmail] = useState();
-#                     const [password, setPassword] = useState();
-#                     const handleSubmit = () => {
-#                         console.log(email, password);
-#                     };
-#                     return (
-#                         <div>
-#                             <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} />
-#                             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-#                             <button onClick={handleSubmit}>Login</button>
-#                         </div>
-#                     );
-#                 }''',
-#                 'filePath': '/path/to/file',
-#                 'label': '_app.js'
-#             }
-#         },
-#         {
-#             'id': 'file-_product.js',
-#             'data': {
-#                 'code': '''class Product {
-#                     constructor(name, price) {
-#                         this.name = name;
-#                         this.price = price;
-#                     }
-#                     toString() {
-#                         return `${this.name} - $${this.price}`;
-#                     }
-#                 }''',
-#                 'filePath': '/path/to/file',
-#                 'label': '_product.js'
-#             }
-#         }
-#     ]
-
-
-#     # Configure LLM with your API key
-#     llm_config = {
-#         'provider': 'openai',
-#         'api_key': os.getenv('OPENAI_API_KEY')
-#     }
-
-#     # Initialize framework
-#     framework = await initialize_framework(code_data, llm_config)
-
-#     # Start chat session
-#     await chat_session(framework)
-
-# if __name__ == "__main__":
-#     asyncio.run(main())
-
-
-
-
-
-from core.fractal_framework import FractalFramework, FractalTask
-from agents.chatbot_agent import ChatbotAgent, LLMProvider, TaskType
+from core.fractal_framework import FractalFramework
+from core.fractal_task import FractalTask, TaskType
 from core.fractal_context import FractalContext
+from agents.chatbot_agent import ChatbotAgent, LLMProvider
 from utils.vector_store import LocalVectorStore
 import asyncio
-from typing import List, Dict, Any
 from dotenv import load_dotenv
 import os
+import logging
+import networkx as nx
+from enum import Enum
 
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)  # Set to DEBUG for more verbose output
+logger = logging.getLogger(__name__)
 
-code_data = [
-    {
-        'id': 'file-_app.js',
-        'data': {
-            'code': '''const login = () => {
-                const [email, setEmail] = useState();
-                const [password, setPassword] = useState();
-                const handleSubmit = () => {
-                    console.log(email, password);
-                };
-                return (
-                    <div>
-                        <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} />
-                        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-                        <button onClick={handleSubmit}>Login</button>
-                    </div>
-                );
-            }''',
-            'filePath': '/path/to/file',
-            'label': '_app.js'
-        }
-    },
-    {
-        'id': 'file-_product.js',
-        'data': {
-            'code': '''class Product {
-                constructor(name, price) {
-                    this.name = name;
-                    this.price = price;
-                }
-                toString() {
-                    return `${this.name} - $${this.price}`;
-                }
-            }''',
-            'filePath': '/path/to/file',
-            'label': '_product.js'
-        }
-    },
-    {
-        'id': 'file-_order.js',
-        'data': {
-            'code': '''class Order {
-                constructor(orderId, productList) {
-                    this.orderId = orderId;
-                    this.productList = productList;
-                }
-                getTotal() {
-                    return this.productList.reduce((total, product) => total + product.price, 0);
-                }
-            }''',
-            'filePath': '/path/to/file',
-            'label': '_order.js'
-        }
-    },
-    {
-        'id': 'file-_user.js',
-        'data': {
-            'code': '''class User {
-                constructor(username, email) {
-                    this.username = username;
-                    this.email = email;
-                }
-                getDetails() {
-                    return `${this.username} (${this.email})`;
-                }
-            }''',
-            'filePath': '/path/to/file',
-            'label': '_user.js'
-        }
-    }
-]
+# Debug: Print available TaskType values
+def debug_task_types():
+    """Debug function to print available TaskType values"""
+    try:
+        logger.debug("Available TaskType values:")
+        for task_type in TaskType:
+            logger.debug(f"- {task_type.name}: {task_type.value}")
+    except Exception as e:
+        logger.error(f"Error inspecting TaskType: {e}")
 
-load_dotenv(dotenv_path='.env')
+async def initialize_framework():
+    """Initialize the framework with necessary components"""
+    # Load environment variables
+    load_dotenv()
+    api_key = os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        raise ValueError("OpenAI API key not found in environment variables")
 
- # Configure LLM with your API key
-llm_config = {
-    'provider': 'openai',
-    'api_key': os.getenv('OPENAI_API_KEY')
-}
+    # Create framework components
+    framework = FractalFramework()
 
-# Create framework
-framework = FractalFramework()
+    # Initialize vector store with API key
+    vector_store = LocalVectorStore(api_key=api_key)
 
-# Create vector store instance
-vector_store = LocalVectorStore(
-    api_key=llm_config['api_key'],  # Use the same API key
-    model_name="text-embedding-3-small",
-    auto_save=True,
-    save_path="code_vectors/store"
-)
+    # Create chat agent
+    chat_agent = ChatbotAgent(
+        name="ai_assistant",
+        llm_provider=LLMProvider.OPENAI,
+        api_key=api_key,
+        vector_store=vector_store
+    )
 
-chat_agent = ChatbotAgent(
-    name="code_assistant",
-    llm_provider=LLMProvider(llm_config['provider']),
-    api_key=llm_config['api_key'],
-    vector_store=vector_store
-)
+    # Add agent to framework
+    framework.add_root_agent(chat_agent)
 
-# Add agents to the framework
-framework.add_root_agent(chat_agent)
+    return framework, vector_store, chat_agent
 
-# Initialize context
-context = FractalContext(framework.graph)
+async def index_code_data(vector_store: LocalVectorStore, code_files: list):
+    """Index code files into vector store"""
+    print("Indexing code files...")
 
+    for file_data in code_files:
+        try:
+            code_id = file_data['id']
+            metadata = {
+                'code': file_data['data']['code'],
+                'filePath': file_data['data'].get('filePath', ''),
+                'language': file_data['data'].get('language', 'unknown')
+            }
 
-# Since code_data is a list, we can convert it to an iterator
-stats = vector_store.bulk_index_code(iter(code_data), batch_size=2)
+            vector_store.add_embedding(code_id, file_data['data']['code'], metadata)
+            print(f"Indexed: {code_id}")
 
-# Print statistics
-print("Indexing Statistics:", stats)
+        except Exception as e:
+            print(f"Error indexing {file_data.get('id', 'unknown')}: {e}")
 
-async def main():
+async def chat_session(framework: FractalFramework, chat_agent: ChatbotAgent):
+    """Run interactive chat session"""
+    print("\nAI Assistant Ready!")
+    print("Ask questions, request code analysis, or get help with development tasks.")
+    print("Type 'exit' to end the session.")
+    print("-" * 50)
+
+    # Debug: Print available task types
+    debug_task_types()
+
+    # Create initial context with empty graph
+    context = FractalContext(graph=nx.DiGraph())
+
     while True:
         try:
-            # Get user input
             user_input = input("\nYou: ").strip()
-            if user_input.lower() == 'quit':
+            if user_input.lower() in ['exit', 'quit']:
                 break
 
-            # Create a task for the chatbot
+            # Create and execute task using TaskType.ANALYZE for now
             task = FractalTask(
-                id="chat_task",
-                type=TaskType.ANALYZE,
+                id=f"chat_{abs(hash(user_input))}",
+                type=TaskType.ANALYZE,  # Using ANALYZE as a fallback
                 data={"message": user_input}
             )
 
-            # Execute task
             result = await chat_agent.execute_task(task, context)
 
             if result.success:
-                print("\nAssistant:", result.result['response'])
+                response = result.result.get("response", "No response generated")
+                print(result)
+                print("\nAssistant:", response)
             else:
-                print("\nError:", result.error)
+                error = result.error or "Unknown error occurred"
+                print("\nError:", error)
 
         except Exception as e:
+            logger.error(f"Error in chat session: {e}", exc_info=True)
             print(f"\nAn error occurred: {e}")
 
+async def main():
+    try:
+        # Initialize framework
+        framework, vector_store, chat_agent = await initialize_framework()
+
+        # Example code data
+        code_files = [
+            {
+                'id': 'example1',
+                'data': {
+                    'code': '''
+                    def process_data(data):
+                        """Process input data and return results"""
+                        results = []
+                        for item in data:
+                            processed = item.strip().lower()
+                            results.append(processed)
+                        return results
+                    ''',
+                    'filePath': 'utils/processor.py',
+                    'language': 'python'
+                }
+            },
+            {
+                "id": "example2",
+                "data": {
+                    "code": '''
+                   const login = async (username, password) => {
+                        try {
+                            const response = await fetch('/api/login', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({ username, password })
+                            });
+                            const data = await response.json();
+                            return data;
+                        } catch (error) {
+                            console.error('Login error:', error);
+                            return null;
+                        }
+                    };
+                    ''',
+                    "filePath": "services/login.js",
+                    "language": "javascript"
+                }
+            }
+        ]
+
+        # Index code data
+        await index_code_data(vector_store, code_files)
+
+        # Start chat session with framework
+        await chat_session(framework, chat_agent)
+
+    except Exception as e:
+        logger.error(f"Error in main: {e}", exc_info=True)
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
-
