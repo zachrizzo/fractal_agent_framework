@@ -6,4 +6,4 @@ from .enhanced_fractal_agent import EnhancedFractalAgent, AgentCapability, Agent
 from .analyze_agent import AnalyzeAgent
 from .transform_agent import TransformAgent
 from .vector_search_agent import VectorSearchAgent
-from .chatbot_agent import ChatbotAgent,ChatMemory,CodeVectorizer
+from .chatbot_agent import ChatbotAgent, ChatMemory

@@ -10,6 +10,7 @@ agents/transform_agent.py
 agents/vector_search_agent.py
 core/__init__.py
 core/adaptive_scheduler.py
+core/agent_pool.py
 core/fractal_context.py
 core/fractal_framework.py
 core/fractal_result.py
@@ -19,6 +20,7 @@ examples/__init__.py
 examples/adaptive_example.py
 examples/advanced.py
 examples/chat.py
+examples/chat_with_storage.py
 examples/vector_store.py
 fractal_framework.egg-info/PKG-INFO
 fractal_framework.egg-info/SOURCES.txt
@@ -32,4 +34,5 @@ patterns/pattern_registry.py
 utils/__init__.py
 utils/language_processors.py
 utils/logging_config.py
+utils/storage.py
 utils/vector_store.py

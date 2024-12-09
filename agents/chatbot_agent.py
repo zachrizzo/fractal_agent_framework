@@ -7,16 +7,17 @@ from datetime import datetime
 import logging
 from enum import Enum
 import json
+import uuid
 
 from .enhanced_fractal_agent import EnhancedFractalAgent, AgentCapability
 from core.fractal_task import FractalTask
 from core.fractal_context import FractalContext
 from core.fractal_result import FractalResult
 from utils.vector_store import LocalVectorStore
+from utils.storage import ConversationStorage, LocalStorage, FirebaseStorage
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
-import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +42,21 @@ class ChatMemory:
     def __init__(
         self,
         max_messages: int = 50,
-        embedding_model: str = "all-MiniLM-L6-v2"
+        embedding_model: str = "all-MiniLM-L6-v2",
+        storage: Optional[ConversationStorage] = None
     ):
         self.messages: List[Message] = []
         self.max_messages = max_messages
         self.embedding_model = SentenceTransformer(embedding_model)
         self.context_history: List[Dict[str, Any]] = []
+        self.storage = storage or LocalStorage()
+        self.current_conversation_id: Optional[str] = None
+
+    async def start_new_conversation(self, metadata: Optional[Dict[str, Any]] = None) -> str:
+        """Start a new conversation"""
+        self.current_conversation_id = await self.storage.create_conversation(metadata)
+        self.messages = []
+        return self.current_conversation_id
 
     async def add_message(self, message: Message):
         """Add and analyze a new message"""
@@ -55,6 +65,34 @@ class ChatMemory:
 
         if len(self.messages) > self.max_messages:
             self.messages.pop(0)
+
+        if self.current_conversation_id:
+            await self.storage.add_message(
+                self.current_conversation_id,
+                {
+                    "role": message.role,
+                    "content": message.content,
+                    "metadata": message.metadata,
+                    "context": message.context
+                }
+            )
+
+    async def load_conversation(self, conversation_id: str) -> bool:
+        """Load a previous conversation"""
+        conversation = await self.storage.get_conversation(conversation_id)
+        if conversation:
+            self.current_conversation_id = conversation_id
+            self.messages = [
+                Message(
+                    role=msg["role"],
+                    content=msg["content"],
+                    metadata=msg.get("metadata", {}),
+                    context=msg.get("context", {})
+                )
+                for msg in conversation.get("messages", [])
+            ]
+            return True
+        return False
 
     def get_context_summary(self) -> Dict[str, Any]:
         """Get current conversation context summary"""
@@ -72,14 +110,15 @@ class ChatMemory:
         }
 
 class ChatbotAgent(EnhancedFractalAgent):
-    """Context-aware chatbot agent"""
+    """Context-aware chatbot agent with storage support"""
 
     def __init__(
         self,
         name: str,
         llm_provider: LLMProvider,
         api_key: str,
-        vector_store: Optional[LocalVectorStore] = None
+        vector_store: Optional[LocalVectorStore] = None,
+        storage: Optional[ConversationStorage] = None
     ):
         super().__init__(name, capabilities=[
             AgentCapability.CODE_ANALYSIS,
@@ -89,7 +128,7 @@ class ChatbotAgent(EnhancedFractalAgent):
 
         self.llm_provider = llm_provider
         self.api_key = api_key
-        self.memory = ChatMemory()
+        self.memory = ChatMemory(storage=storage)
         self.vector_store = vector_store or LocalVectorStore(api_key=api_key)
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
@@ -108,13 +147,13 @@ class ChatbotAgent(EnhancedFractalAgent):
         4. Execution strategy
 
         Return JSON with these fields:
-        {
+        {{
             "intent": "string",
             "capabilities": ["string"],
             "context_importance": float,
             "strategy": "string",
             "requires_code_context": boolean
-        }"""
+        }}"""
 
         try:
             response = await self._generate_llm_response(
@@ -139,6 +178,14 @@ class ChatbotAgent(EnhancedFractalAgent):
             if not message:
                 return FractalResult(task.id, False, error="No message provided")
 
+            # Handle conversation management commands
+            if message.startswith("/"):
+                return await self._handle_command(message, task.id)
+
+            # Ensure we have an active conversation
+            if not self.memory.current_conversation_id:
+                await self.memory.start_new_conversation()
+
             # Add message to memory
             user_message = Message(role="user", content=message)
             await self.memory.add_message(user_message)
@@ -149,11 +196,21 @@ class ChatbotAgent(EnhancedFractalAgent):
             # Analyze task
             task_analysis = await self._analyze_task(message, context_summary)
 
+            # Get relevant code context if needed
+            code_context = None
+            if task_analysis.get("requires_code_context", False):
+                code_context = self._get_relevant_code_context(message)
+
             # Generate response
             response = await self._generate_response(message, {
                 "task_analysis": task_analysis,
-                "conversation_context": context_summary
+                "conversation_context": context_summary,
+                "code_context": code_context
             })
+
+            # Add assistant's response to memory
+            assistant_message = Message(role="assistant", content=response["content"])
+            await self.memory.add_message(assistant_message)
 
             return FractalResult(
                 task_id=task.id,
@@ -165,6 +222,65 @@ class ChatbotAgent(EnhancedFractalAgent):
             logger.error(f"Error in task processing: {str(e)}")
             return FractalResult(task.id, False, error=str(e))
 
+    def _get_relevant_code_context(self, message: str) -> Optional[List[Dict[str, Any]]]:
+        """Get relevant code context from vector store"""
+        try:
+            # Search for similar code in vector store
+            results = self.vector_store.simple_search_similar(message, k=3, threshold=0.3)
+
+            if not results:
+                return None
+
+            # Format results for context
+            code_contexts = []
+            for code_id, similarity, metadata in results:
+                code_contexts.append({
+                    "code_id": code_id,
+                    "similarity": similarity,
+                    "code": metadata.get("code", ""),
+                    "file_path": metadata.get("filePath", ""),
+                    "language": metadata.get("language", "unknown")
+                })
+
+            return code_contexts
+
+        except Exception as e:
+            logger.error(f"Error getting code context: {e}")
+            return None
+
+    async def _handle_command(self, command: str, task_id: str) -> FractalResult:
+        """Handle conversation management commands"""
+        parts = command.split()
+        cmd = parts[0].lower()
+
+        try:
+            if cmd == "/new":
+                conversation_id = await self.memory.start_new_conversation()
+                return FractalResult(task_id, True, result={
+                    "content": f"Started new conversation with ID: {conversation_id}"
+                })
+
+            elif cmd == "/load" and len(parts) > 1:
+                success = await self.memory.load_conversation(parts[1])
+                return FractalResult(task_id, success, result={
+                    "content": "Conversation loaded successfully" if success else "Failed to load conversation"
+                })
+
+            elif cmd == "/list":
+                conversations = await self.memory.storage.list_conversations()
+                content = "Recent conversations:\n" + "\n".join(
+                    f"- {conv['id']}: {conv.get('metadata', {}).get('title', 'Untitled')} "
+                    f"({conv['created_at']})"
+                    for conv in conversations
+                )
+                return FractalResult(task_id, True, result={"content": content})
+
+            else:
+                return FractalResult(task_id, False, error="Unknown command")
+
+        except Exception as e:
+            return FractalResult(task_id, False, error=str(e))
+
     async def _generate_response(
         self,
         message: str,
@@ -175,7 +291,8 @@ class ChatbotAgent(EnhancedFractalAgent):
         1. Provides clear, direct responses
         2. Uses available context effectively
         3. Explains technical concepts clearly
-        4. Maintains conversation continuity"""
+        4. Maintains conversation continuity
+        5. References and explains code when relevant"""
 
         prompt = self._create_response_prompt(message, context)
 
@@ -203,6 +320,16 @@ class ChatbotAgent(EnhancedFractalAgent):
         """Create detailed prompt with context"""
         parts = [f"User Message: {message}\n"]
 
+        # Add code context if available
+        if code_context := context.get("code_context"):
+            parts.append("\nRelevant Code Context:")
+            for ctx in code_context:
+                parts.append(f"\nFile: {ctx['file_path']} ({ctx['language']})")
+                parts.append("```")
+                parts.append(ctx['code'])
+                parts.append("```")
+
+        # Add conversation context
         if conv_context := context.get("conversation_context", {}).get("recent_messages"):
             parts.append("\nConversation Context:")
             for msg in conv_context[-3:]:  # Last 3 messages
@@ -210,8 +337,9 @@ class ChatbotAgent(EnhancedFractalAgent):
 
         parts.append("\nProvide a response that:")
         parts.append("1. Directly addresses the user's question/request")
-        parts.append("2. Incorporates relevant context")
-        parts.append("3. Is clear and well-structured")
+        parts.append("2. Incorporates relevant code context when available")
+        parts.append("3. Explains technical concepts clearly")
+        parts.append("4. Is well-structured and easy to understand")
 
         return "\n".join(parts)
 

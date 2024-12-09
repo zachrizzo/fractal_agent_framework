@@ -1,0 +1,21 @@
+{
+  "id": "407b7595-2a23-4b93-abe8-a60455f8e66c",
+  "created_at": "2024-12-08T22:17:31.815090",
+  "metadata": {},
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi",
+      "metadata": {},
+      "context": {},
+      "timestamp": "2024-12-08T22:17:34.420273"
+    },
+    {
+      "role": "assistant",
+      "content": "Hello! How can I assist you today?",
+      "metadata": {},
+      "context": {},
+      "timestamp": "2024-12-08T22:17:38.291625"
+    }
+  ]
+}

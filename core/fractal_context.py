@@ -1,9 +1,11 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 import networkx as nx
-from core.agent_pool import AgentPool
 import logging
+
+if TYPE_CHECKING:
+    from core.agent_pool import AgentPool
 
 logger = logging.getLogger(__name__)
 
@@ -15,10 +17,11 @@ class FractalContext:
     depth: int = 0
     parent_id: Optional[str] = None
 
-    agent_pool: AgentPool = field(init=False)
+    agent_pool: 'AgentPool' = field(init=False)
     data: Dict[str, Any] = field(default_factory=dict, init=False)
 
     def __post_init__(self):
+        from core.agent_pool import AgentPool
         self.agent_pool = AgentPool()
         logger.debug("Initialized FractalContext with AgentPool")
 
